@@ -1,0 +1,92 @@
+import RPi.GPIO as GPIO
+
+class PWM_DAC:
+    def __init__(self, gpio_pin, pwm_frequency, dynamic_range, verbose=False):
+        """
+        Инициализация ЦАП на основе ШИМ
+        
+        Параметры:
+        gpio_pin - номер GPIO пина для ШИМ
+        pwm_frequency - частота ШИМ в Гц
+        dynamic_range - максимальное напряжение (опорное)
+        verbose - режим вывода отладочной информации
+        """
+        self.gpio_pin = gpio_pin
+        self.pwm_frequency = pwm_frequency
+        self.dynamic_range = dynamic_range
+        self.verbose = verbose
+        
+        # Настройка GPIO
+        GPIO.setmode(GPIO.BCM)
+        GPIO.setup(self.gpio_pin, GPIO.OUT)
+        
+        # Инициализация ШИМ с частотой pwm_frequency
+        # Частота ШИМ влияет на качество фильтрации
+        self.pwm = GPIO.PWM(self.gpio_pin, self.pwm_frequency)
+        self.pwm.start(0)  # начинаем с 0% заполнения (0 В)
+        
+        if self.verbose:
+            print(f"PWM_DAC инициализирован на пине GPIO{self.gpio_pin}")
+            print(f"Частота ШИМ: {self.pwm_frequency} Гц")
+            print(f"Диапазон: 0..{self.dynamic_range} В")
+    
+    def deinit(self):
+        """Остановка ШИМ и очистка GPIO"""
+        if hasattr(self, 'pwm'):
+            self.pwm.stop()
+        GPIO.cleanup()
+        if self.verbose:
+            print("PWM_DAC деинициализирован")
+    
+    def set_voltage(self, voltage):
+        """
+        Установка напряжения на выходе ЦАП
+        
+        Параметры:
+        voltage - желаемое напряжение в вольтах (от 0 до dynamic_range)
+        """
+        # Проверка на выход за пределы диапазона
+        if voltage < 0:
+            if self.verbose:
+                print(f"Предупреждение: напряжение {voltage} В ниже 0, устанавливаю 0 В")
+            voltage = 0
+        elif voltage > self.dynamic_range:
+            if self.verbose:
+                print(f"Предупреждение: напряжение {voltage} В выше {self.dynamic_range} В, устанавливаю {self.dynamic_range} В")
+            voltage = self.dynamic_range
+        
+        # Преобразование напряжения в коэффициент заполнения ШИМ
+        # duty_cycle = (желаемое_напряжение / опорное_напряжение) * 100%
+        duty_cycle = (voltage / self.dynamic_range) * 100.0
+        
+        # Устанавливаем коэффициент заполнения
+        self.pwm.ChangeDutyCycle(duty_cycle)
+        
+        if self.verbose:
+            print(f"Установлено напряжение: {voltage:.3f} В (duty cycle = {duty_cycle:.1f}%)")
+
+
+# Основной охранник
+if __name__ == "__main__":
+    try:
+        # Создаем объект ЦАП
+        # Пин 12, частота 500 Гц, опорное напряжение 3.290 В, с выводом отладочной информации
+        dac = PWM_DAC(12, 500, 3.290, True)
+        
+        # Бесконечный цикл запроса напряжения
+        while True:
+            try:
+                # Запрашиваем напряжение у пользователя
+                voltage = float(input("Введите напряжение в Вольтах: "))
+                dac.set_voltage(voltage)
+                
+            except ValueError:
+                print("Вы ввели не число. Попробуйте ещё раз\n")
+                
+    except KeyboardInterrupt:
+        print("\nПрограмма прервана пользователем")
+        
+    finally:
+        # Гарантированная деинициализация при любом исходе
+        if 'dac' in locals():
+            dac.deinit()

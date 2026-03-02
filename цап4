@@ -1,0 +1,128 @@
+import smbus
+
+class MCP4725:
+    def __init__(self, dynamic_range, address=0x61, verbose=True):
+        """
+        Инициализация работы с микросхемой MCP4725
+        
+        Параметры:
+        dynamic_range - максимальное напряжение на выходе (опорное)
+        address - I2C адрес микросхемы (по умолчанию 0x61 для get-dac)
+        verbose - режим вывода отладочной информации
+        """
+        # Создаем объект для работы с I2C шиной (шина 1 на Raspberry Pi)
+        self.bus = smbus.SMBus(1)
+        
+        self.address = address
+        # wm (write mode) - 0x00 для записи в регистр ЦАП без записи в EEPROM
+        # pds (power down) - 0x00 для нормального режима работы
+        self.wm = 0x00
+        self.pds = 0x00
+        
+        self.verbose = verbose
+        self.dynamic_range = dynamic_range
+        
+        if self.verbose:
+            print(f"MCP4725 инициализирован по адресу 0x{self.address:02X}")
+            print(f"Диапазон: 0..{self.dynamic_range} В (12 бит = 4096 уровней)")
+    
+    def deinit(self):
+        """Закрытие I2C шины"""
+        self.bus.close()
+        if self.verbose:
+            print("I2C шина закрыта")
+    
+    def set_number(self, number):
+        """
+        Отправка числа в ЦАП MCP4725
+        
+        Параметры:
+        number - целое число от 0 до 4095 (12 бит)
+        """
+        # Проверка, что number - целое число
+        if not isinstance(number, int):
+            print("Ошибка: На вход ЦАП можно подавать только целые числа")
+            return
+        
+        # Проверка на выход за пределы 12-битного диапазона
+        if number < 0:
+            if self.verbose:
+                print(f"Предупреждение: число {number} ниже 0, устанавливаю 0")
+            number = 0
+        elif number > 4095:
+            if self.verbose:
+                print(f"Предупреждение: число {number} превышает 4095, устанавливаю 4095")
+            number = 4095
+        
+        # Формирование двух байт для отправки
+        # Первый байт: [wm(2 бита) | pds(2 бита) | старшие 4 бита числа]
+        # wm и pds - по 2 бита, итого 4 бита настроек + 4 бита данных = 1 байт
+        first_byte = (self.wm << 6) | (self.pds << 4) | ((number >> 8) & 0x0F)
+        
+        # Второй байт: младшие 8 бит числа
+        second_byte = number & 0xFF
+        
+        # Отправка данных по I2C
+        # write_byte_data(адрес_микросхемы, первый_байт, второй_байт)
+        self.bus.write_byte_data(self.address, first_byte, second_byte)
+        
+        if self.verbose:
+            # Адрес для отправки: (адрес_микросхемы << 1) - так как write_byte_data добавляет бит записи
+            print(f"Число: {number:4d} (0x{number:03X}), отправленные по I2C данные: [0x{(self.address << 1):02X}, 0x{first_byte:02X}, 0x{second_byte:02X}]")
+            print(f"  Напряжение: {self._code_to_voltage(number):.3f} В\n")
+    
+    def set_voltage(self, voltage):
+        """
+        Установка напряжения на выходе ЦАП
+        
+        Параметры:
+        voltage - желаемое напряжение в вольтах (от 0 до dynamic_range)
+        """
+        # Проверка на выход за пределы диапазона
+        if voltage < 0:
+            if self.verbose:
+                print(f"Предупреждение: напряжение {voltage} В ниже 0, устанавливаю 0 В")
+            voltage = 0
+        elif voltage > self.dynamic_range:
+            if self.verbose:
+                print(f"Предупреждение: напряжение {voltage} В выше {self.dynamic_range} В, устанавливаю {self.dynamic_range} В")
+            voltage = self.dynamic_range
+        
+        # Преобразование напряжения в код ЦАП
+        # number = (желаемое_напряжение / опорное_напряжение) * 4095
+        number = int(round((voltage / self.dynamic_range) * 4095))
+        
+        # Устанавливаем число в ЦАП
+        self.set_number(number)
+    
+    def _code_to_voltage(self, code):
+        """
+        Внутренний метод для преобразования кода ЦАП в напряжение
+        """
+        return (code / 4095) * self.dynamic_range
+
+
+# Основной охранник
+if __name__ == "__main__":
+    try:
+        # Создаем объект для работы с MCP4725
+        # Опорное напряжение 5.0 В, адрес 0x61, с выводом отладочной информации
+        dac = MCP4725(5.0, 0x61, True)
+        
+        # Бесконечный цикл запроса напряжения
+        while True:
+            try:
+                # Запрашиваем напряжение у пользователя
+                voltage = float(input("Введите напряжение в Вольтах (0..5.0 В): "))
+                dac.set_voltage(voltage)
+                
+            except ValueError:
+                print("Вы ввели не число. Попробуйте ещё раз\n")
+                
+    except KeyboardInterrupt:
+        print("\nПрограмма прервана пользователем")
+        
+    finally:
+        # Гарантированная деинициализация при любом исходе
+        if 'dac' in locals():
+            dac.deinit()
