@@ -19,17 +19,17 @@ class MCP4725:
             return
 
         if not (0 <= number <= 4095):
-            print("Число выходит за разраядность MCP4752 (12 бит)")
+            print("Число выходит за разрядность MCP4725 (12 бит)")
             return
 
-        first_byte = self.wm | self.pds | (number >> 8)
+        first_byte = (self.wm << 1) | (self.pds << 1) | ((number >> 8) & 0x0F)
         second_byte = number & 0xFF
         
         try:
-            self.bus.write_byte_data(self.address, first_byte, second_byte)
+            self.bus.write_i2c_block_data(self.address, first_byte, [second_byte])
         except:
             time.sleep(0.01)
-            self.bus.write_byte_data(self.address, first_byte, second_byte)
+            self.bus.write_i2c_block_data(self.address, first_byte, [second_byte])
 
         if self.verbose:
             print(
@@ -37,10 +37,11 @@ class MCP4725:
             )
 
     def set_voltage(self, voltage):
-        if not (0.0 <= voltage <= self.dynamic_range) and self.verbose:
-            print(
-                f"Напряжение выходит за динамический диапазон ЦАП (0.00 - {self.dynamic_range:.2f} В)"
-            )
+        if not (0.0 <= voltage <= self.dynamic_range):
+            if self.verbose:
+                print(
+                    f"Напряжение выходит за динамический диапазон ЦАП (0.00 - {self.dynamic_range:.2f} В)"
+                )
             self.set_number(0)
         else:
             self.set_number(int(voltage / self.dynamic_range * 4095))
